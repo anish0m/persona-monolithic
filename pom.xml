@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+      The Spring Boot "starter parent" gives us two things for free:
+        1. Dependency management - we can list dependencies WITHOUT a <version>,
+           and Spring Boot picks versions that are known to work together.
+        2. Sensible plugin defaults - the compiler, the test runner, and the
+           spring-boot-maven-plugin are all pre-configured.
+      Without it we would be hand-picking dozens of compatible version numbers.
+    -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.1.1</version>
+        <relativePath/>
+    </parent>
+
+    <!-- groupId + artifactId + version = this project's unique coordinates. -->
+    <groupId>com.persona</groupId>
+    <artifactId>persona-monolith</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>persona-monolith</name>
+    <description>persona - signup/login/profile CRUD, built as a single deployable monolith</description>
+
+    <properties>
+        <java.version>21</java.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <dependencies>
+        <!--
+          spring-boot-starter-webmvc brings in: Spring MVC (@RestController, @GetMapping),
+          Jackson (Java objects <-> JSON), and an embedded Tomcat server.
+          This is why the app can serve HTTP without us installing a server.
+
+          NAME CHANGE IN SPRING BOOT 4: this was called `spring-boot-starter-web`
+          in 3.x. Nearly every tutorial and StackOverflow answer you will find still
+          says `-web`. On Boot 4 that artifact does not resolve - if you ever see
+          "Could not resolve dependencies ... spring-boot-starter-web", this is why.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc</artifactId>
+        </dependency>
+
+        <!--
+          Test-only. Bundles JUnit 5, AssertJ, Mockito and Spring's test support.
+          <scope>test</scope> means it is on the classpath when running tests,
+          but is NOT packaged into the deployed jar.
+
+          Also renamed in Boot 4: was `spring-boot-starter-test` in 3.x.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+              Repackages the compiled classes + all dependencies into ONE
+              executable "fat jar", so `java -jar target/persona-monolith.jar` just runs.
+              It is also what makes `mvn spring-boot:run` work.
+            -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>
