@@ -193,6 +193,65 @@ public class User {
     }
 
     /**
+     * Two Users are the same person when they have the same email.
+     *
+     * <p>Without this method, {@code equals} is inherited from {@code Object},
+     * where it means "the same object in memory". Two Users built from the same
+     * row of the same database are then <em>not equal</em> — which is not what
+     * anybody means by equal, and it is wrong in a way that is easy to miss
+     * because nothing fails loudly.
+     *
+     * <p>Only email is compared, and that is deliberate. Equality here answers
+     * "is this the same person?", not "do these two objects hold identical
+     * bytes?". A person who changes their profile picture is still the same
+     * person. Include every field and you get an equality that says otherwise.
+     *
+     * <p>Email is the right field precisely because it is {@code final}. Equality
+     * built on a mutable field is a trap — see {@link #hashCode()}.
+     */
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) {
+            return true;
+        }
+        // getClass() rather than instanceof: a future subclass of User is not
+        // interchangeable with a User just because it happens to share an email.
+        if (other == null || getClass() != other.getClass()) {
+            return false;
+        }
+        return email.equals(((User) other).email);
+    }
+
+    /**
+     * Must be overridden whenever {@code equals} is, and must use the same field.
+     * This is not a style rule; breaking it breaks every hash-based collection in
+     * the JDK.
+     *
+     * <p>How a {@code HashSet} actually decides membership: it calls
+     * {@code hashCode()} to pick a bucket, and only then calls {@code equals} on
+     * the few items already in that bucket. Override {@code equals} alone and two
+     * equal Users land in <em>different</em> buckets, so {@code equals} is never
+     * consulted — {@code set.contains(sameUser)} returns {@code false} while
+     * {@code a.equals(b)} returns {@code true}. The object is simultaneously in
+     * the set and not findable in it. That is the duplicate-signup bug this slice
+     * exists to prevent.
+     *
+     * <p>The contract is one-directional: equal objects <b>must</b> have equal
+     * hash codes; unequal objects <em>may</em> collide, and that is merely slow,
+     * not wrong.
+     *
+     * <p>And here is why the field must be immutable. Put a User in a
+     * {@code HashMap}, then change the field the hash is computed from, and the
+     * key's bucket is now wrong — the entry is still in the map but permanently
+     * unreachable, a genuine memory leak. {@code email} being {@code final} means
+     * this cannot happen. That is the payoff for the decision made back in slice 2.
+     */
+    @Override
+    public int hashCode() {
+        return email.hashCode();
+    }
+
+    /**
      * Deliberately excludes the password. {@code toString} output ends up in log
      * files, stack traces and IDE debugger views — all places a credential must
      * never reach. Forgetting this one method is a genuinely common way real
