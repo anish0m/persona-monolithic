@@ -3,6 +3,7 @@ package com.persona.repository;
 import com.persona.exception.DuplicateEmailException;
 import com.persona.exception.UserNotFoundException;
 import com.persona.model.User;
+import org.springframework.stereotype.Repository;
 
 import java.util.Collection;
 import java.util.List;
@@ -27,10 +28,21 @@ import java.util.concurrent.ConcurrentHashMap;
  * here only because uniqueness is a property of the collection — see
  * {@link DuplicateEmailException}.
  *
- * <p>No Spring annotation yet, for the same reason the model has none: it is not
- * needed to make the class work, and adding it now would obscure that this is
- * ordinary Java. Day-02 adds {@code @Repository} and the class becomes injectable.
+ * <p>{@code @Repository} does two things. The obvious one: it makes this class a
+ * bean, so Spring builds it at startup and hands it to whoever asks. The one worth
+ * remembering: it switches on <b>exception translation</b>. From Day-03, a
+ * vendor-specific {@code PSQLException} thrown inside here is caught and rethrown
+ * as Spring's {@code DataAccessException} before it leaves the class. That is why
+ * the annotation is not interchangeable with {@code @Service} even though both
+ * merely "make a bean" — swap it and the service layer starts importing
+ * {@code org.postgresql}, and the layer whose whole job is not knowing where data
+ * lives would then name the vendor.
+ *
+ * <p>Note that today, in memory, that translation protects nothing. The annotation
+ * is correct now and load-bearing later, and the failure from getting it wrong
+ * would not appear until Day-03 — which is precisely why it is easy to get wrong.
  */
+@Repository
 public class InMemoryUserRepository {
 
     /**
