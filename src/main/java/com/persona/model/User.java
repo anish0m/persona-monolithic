@@ -20,6 +20,47 @@ import java.util.Optional;
 public class User {
 
     /**
+     * The database's identity for this row — {@code null} until it has been saved.
+     *
+     * <p><b>Day-03 added this field, and the nullability is the interesting part.</b>
+     * A {@code User} the controller has just built from a request is a perfectly
+     * valid User that does not exist in any table yet. Only {@code save} can
+     * assign an id, because only the database knows what the next one is. So the
+     * type must permit "no id yet", and {@code Long} rather than {@code long} is
+     * what says that — a primitive {@code long} would default to 0, and 0 is
+     * indistinguishable from a real id.
+     *
+     * <p><b>Why equals() and hashCode() still use email, not this.</b> An obvious
+     * reading of "id is the primary key" says identity should compare ids. It
+     * cannot, and the reason is the null above: two unsaved users would both have
+     * a null id and compare EQUAL, which would collapse them into one entry in any
+     * {@code HashSet}. Worse, saving a user would change its hash code while it sat
+     * in a collection — the bucket problem from Day-00, with the key moving under
+     * the map.
+     *
+     * <p>So there are genuinely two identities here, and they are not in conflict:
+     * {@code id} is what the ROW is, {@code email} is what the PERSON is. Business
+     * equality is the person. This is exactly why the table has both a primary key
+     * and a unique constraint.
+     *
+     * <p>There is no setter. Nothing in the application may assign an id — the
+     * repository sets it through the package-private {@link #assignId} below, at
+     * the one moment it is legitimate.
+     */
+    private Long id;
+
+    /**
+     * When the row was created, in UTC. {@code null} until saved, for the same
+     * reason as {@link #id}: the database supplies it via {@code DEFAULT now()}.
+     *
+     * <p>Letting the database stamp this rather than the application is deliberate.
+     * Application servers drift, run in different timezones, and there may be
+     * several of them; the database is one clock. For a record of when something
+     * happened, one slightly-wrong clock beats several disagreeing ones.
+     */
+    private java.time.Instant createdAt;
+
+    /**
      * Chosen at construction and never changed afterwards, so it is {@code final}
      * and has no setter. The compiler now enforces that promise — a future
      * {@code setEmail} cannot be added by accident, only deliberately.
@@ -78,6 +119,42 @@ public class User {
     }
 
     /**
+     * Rebuilds a User that already exists in storage. <b>Day-03.</b>
+     *
+     * <p>There are now two ways to obtain a User, and they are genuinely different
+     * events. The constructor above means <em>a new person is signing up</em>: no
+     * id, no timestamp, and validation must run because the data came from outside.
+     * This one means <em>a row that was already accepted is being read back</em>,
+     * and it carries the id and {@code created_at} the database assigned.
+     *
+     * <p>The alternative — a public {@code setId} — was rejected. A setter is
+     * available to everyone forever, so a controller could invent an id, and an
+     * invented id is a row pointing at the wrong person. Passing identity through
+     * a constructor means it can only be supplied at the one moment it is known,
+     * and {@code id} can stay without a setter. Same instinct as the final
+     * {@code email}: rather than documenting that something must not happen,
+     * arrange for there to be no method with which to do it.
+     *
+     * <p>Validation still runs. It is tempting to skip it — the row was validated
+     * on the way in, so this is wasted work. But "was validated on the way in" is
+     * an assumption about every past version of this application and about anyone
+     * who has ever held a psql prompt. If the database contains a user with a blank
+     * name, the useful moment to find out is on read, not three layers later.
+     *
+     * <p>Only the repository should call this. Java cannot express that across
+     * packages without a module system, so it is stated rather than enforced —
+     * which is precisely the weaker kind of protection this class usually avoids,
+     * and worth noticing as the exception.
+     */
+    public User(Long id, String email, String firstName, String lastName,
+                String password, String image, java.time.Instant createdAt) {
+        this(email, firstName, lastName, password);
+        this.id = id;
+        this.image = image;
+        this.createdAt = createdAt;
+    }
+
+    /**
      * The model validates only what it can check <em>using itself</em>: null,
      * blank, length. That is the whole test for whether a rule belongs here.
      *
@@ -96,6 +173,16 @@ public class User {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(fieldName + " cannot be null or blank");
         }
+    }
+
+    /** The storage id, or {@code null} if this user has never been saved. */
+    public Long getId() {
+        return id;
+    }
+
+    /** When this row was created, or {@code null} if never saved. */
+    public java.time.Instant getCreatedAt() {
+        return createdAt;
     }
 
     public String getEmail() {

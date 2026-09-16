@@ -43,7 +43,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * would not appear until Day-03 — which is precisely why it is easy to get wrong.
  */
 @Repository
-public class InMemoryUserRepository {
+@org.springframework.context.annotation.Profile("test")
+public class InMemoryUserRepository implements UserRepository {
 
     /**
      * Keyed by email because email is identity — the same decision that

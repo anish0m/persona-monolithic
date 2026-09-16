@@ -3,7 +3,7 @@ package com.persona.service;
 import com.persona.exception.DuplicateEmailException;
 import com.persona.exception.UserNotFoundException;
 import com.persona.model.User;
-import com.persona.repository.InMemoryUserRepository;
+import com.persona.repository.UserRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.Collection;
@@ -25,7 +25,7 @@ import java.util.Optional;
  * it survives the transport being replaced.
  *
  * <p>It also does not know <em>where</em> users are stored. It holds an
- * {@link InMemoryUserRepository} today and a PostgreSQL-backed one from Day-03,
+ * {@code InMemoryUserRepository} today and a PostgreSQL-backed one from Day-03,
  * and the intent is that this file does not change when that happens.
  */
 @Service
@@ -44,7 +44,7 @@ public class UserService {
      * with no exception and no reproducible failure — only wrong answers. Being
      * {@code final} makes that impossible to express rather than merely agreed.
      */
-    private final InMemoryUserRepository repository;
+    private final UserRepository repository;
 
     /**
      * Constructor injection, with no {@code @Autowired} — a class with exactly one
@@ -58,14 +58,14 @@ public class UserService {
      * plain JUnit test, which is why the tests for this class run in milliseconds
      * and need no application context.
      */
-    public UserService(InMemoryUserRepository repository) {
+    public UserService(UserRepository repository) {
         this.repository = repository;
     }
 
     /**
      * Registers a new user.
      *
-     * <p>The duplicate check below looks redundant — {@link InMemoryUserRepository}
+     * <p>The duplicate check below looks redundant — {@code InMemoryUserRepository}
      * already throws on a taken key. It is not redundant, but nor is it what makes
      * the system correct, and the distinction matters:
      *
