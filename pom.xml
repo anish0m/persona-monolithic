@@ -63,6 +63,30 @@
         </dependency>
 
         <!--
+          Day-04. JPA, and note what it is NOT replacing: the line above stays.
+
+          This starter brings Hibernate 7 (the implementation), the Jakarta
+          Persistence API (the specification — @Entity, @Id, @Column) and Spring
+          Data JPA (the convenience layer that writes findByEmail's body). Three
+          layers, one dependency, which is exactly why people conflate them.
+
+          It also transitively includes spring-boot-starter-jdbc. Keeping the
+          explicit declaration above is deliberate: JdbcUserRepository still
+          compiles and still ships, and a dependency something needs DIRECTLY
+          should be declared directly. Relying on it arriving through a starter
+          means it silently disappears the day that starter is removed.
+
+          NAME CHECK: this one did NOT get renamed in Boot 4 — it is still
+          spring-boot-starter-data-jpa, unlike -web -> -webmvc. Verified against
+          the local repository rather than assumed, because Boot 4 is past the
+          training cutoff and the -web rename proved that memory is not evidence.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <!--
           The PostgreSQL driver: the code that actually speaks Postgres's wire
           protocol over a socket. <scope>runtime</scope> because nothing we write
           imports org.postgresql — we compile against java.sql interfaces, and
