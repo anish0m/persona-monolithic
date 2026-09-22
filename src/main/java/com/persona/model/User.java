@@ -211,21 +211,48 @@ public class User {
     private String lastName;
 
     /**
-     * Stored as given for now. This is a known, temporary lie: Day-06 replaces it
-     * with a BCrypt hash and this field becomes {@code passwordHash}. It is named
-     * plainly today so that the change on Day-06 is visible and deliberate rather
-     * than silent.
+     * A <b>BCrypt hash</b>, never a password. Day-05 paid the debt this field's
+     * previous comment recorded: it used to be called {@code password} and used to
+     * hold plaintext.
+     *
+     * <p><b>The rename is the point, not a tidy-up.</b> A field called
+     * {@code password} holding a hash is a lie that costs whoever reads it next.
+     * More usefully, the rename made every line that assumed plaintext fail to
+     * compile, so the change could not be half-applied. A name that cannot drift
+     * out of date silently is the cheapest documentation available.
+     *
+     * <p><b>This class does not hash, and must not.</b> Hashing needs a
+     * {@link org.springframework.security.crypto.password.PasswordEncoder}, and a
+     * model holding a Spring bean has stopped being a model — it could no longer
+     * be constructed in a plain unit test, which is the property that keeps
+     * {@code UserTest} running in milliseconds. The encoder lives in
+     * {@code UserService}, which is the one place that knows a signup is
+     * happening.
+     *
+     * <p><b>Consequently this field's invariant is weaker than it looks.</b>
+     * {@code requireText} still guarantees it is present and non-blank, and that
+     * is all a class can check using only itself. It cannot verify that what it
+     * holds is a hash rather than a password — {@code "hunter2"} is a perfectly
+     * good non-blank string. That guarantee lives in two other places: the
+     * {@code VARCHAR(60)} column, which a plaintext password of any length is
+     * unlikely to fit, and the service being the only route in. The model's rule
+     * from slice 2 holds exactly: <em>the model validates only what it can check
+     * using itself.</em>
      *
      * <p><b>Day-04 note on mapping being opt-OUT.</b> Nothing here says "persist
      * this" — every non-static, non-transient field is mapped by default. So this
      * field is stored because it was not excluded, not because it was chosen. A
      * field that must never reach the database takes {@code @Transient} (the JPA
      * annotation, meaning "not for the database" — not the Java {@code transient}
-     * keyword, which means "not for serialization"). Worth knowing precisely here,
-     * because this is the field most likely to be reached for on Day-06.
+     * keyword, which means "not for serialization").
+     *
+     * <p>{@code length = 60} now matches V2 exactly, so {@code ddl-auto: validate}
+     * audits the claim at startup. Had the column been narrowed and this left at
+     * 255, the application would refuse to boot — which is the entire reason
+     * {@code validate} is switched on.
      */
-    @Column(name = "password", nullable = false, length = 255)
-    private String password;
+    @Column(name = "password_hash", nullable = false, length = 60)
+    private String passwordHash;
 
     /**
      * A profile picture URL, or {@code null} when the person has not set one.
@@ -280,16 +307,31 @@ public class User {
      *
      * <p>Note it delegates to the setters rather than assigning directly. Both
      * routes into a field — construction and later mutation — then run the same
-     * validation, written once. Duplicate the rule instead and Day-06's switch to
+     * validation, written once. Duplicate the rule instead and Day-05's switch to
      * BCrypt gets applied to one path and forgotten in the other, which lets an
      * unhashed password in through the constructor.
+     *
+     * <p><b>Day-05 update, and the comment above turned out to be load-bearing.</b>
+     * The fourth parameter is now {@code passwordHash} and it is named that way
+     * deliberately: renaming the field forced every call site to be revisited, so
+     * the compiler enumerated the work instead of a human trying to remember it.
+     * Exactly one caller passes a real hash — {@code UserService.register}, which
+     * encodes immediately before calling this. Every other caller is a test.
+     *
+     * <p>This constructor cannot verify that claim. It takes a String, and a
+     * plaintext password is also a String, so nothing here can tell them apart.
+     * That is not a gap to be patched with a regex: it is the reason the service
+     * takes a {@code CreateUserRequest} rather than a {@code User}. A type that is
+     * only ever built from a request body can only ever carry plaintext, so the
+     * question "is this already hashed?" stops being askable rather than being
+     * answered carefully.
      */
-    public User(String email, String firstName, String lastName, String password) {
+    public User(String email, String firstName, String lastName, String passwordHash) {
         requireText(email, "Email");
         this.email = email;
         setFirstName(firstName);
         setLastName(lastName);
-        setPassword(password);
+        setPasswordHash(passwordHash);
     }
 
     /**
@@ -321,8 +363,8 @@ public class User {
      * and worth noticing as the exception.
      */
     public User(Long id, String email, String firstName, String lastName,
-                String password, String image, java.time.Instant createdAt) {
-        this(email, firstName, lastName, password);
+                String passwordHash, String image, java.time.Instant createdAt) {
+        this(email, firstName, lastName, passwordHash);
         this.id = id;
         this.image = image;
         this.createdAt = createdAt;
@@ -386,13 +428,39 @@ public class User {
         this.lastName = lastName;
     }
 
-    public String getPassword() {
-        return password;
+    /**
+     * The stored BCrypt hash.
+     *
+     * <p>Note this getter is still public, and it is worth being explicit about why
+     * that is acceptable now when a {@code getPassword()} returning plaintext was
+     * always a hazard. A hash is not a credential: possessing it does not let you
+     * log in, because login supplies a password and the server hashes it. The
+     * damage a leaked hash does is bounded by how long it takes to guess the
+     * password that produced it — which is the entire reason BCrypt is slow.
+     *
+     * <p>It still must not leave the process. {@link com.persona.dto.UserResponse}
+     * excludes it by not having the field, {@link #toString()} omits it, and
+     * nothing in the web layer reads it. The one legitimate caller is Day-06's
+     * login check, which will pass it to {@code PasswordEncoder.matches}.
+     */
+    public String getPasswordHash() {
+        return passwordHash;
     }
 
-    public void setPassword(String password) {
-        requireText(password, "Password");
-        this.password = password;
+    /**
+     * Replaces the stored hash.
+     *
+     * <p>{@code requireText} is the whole of the validation, and it is honest about
+     * its limits: it proves the value is present and non-blank, not that it is a
+     * hash. A check like {@code startsWith("$2")} is tempting and was rejected —
+     * it would hard-code one algorithm into the model, so moving to argon2 on some
+     * later day would break the domain class rather than the one service method
+     * that actually chose the algorithm. The model does not get an opinion about
+     * which hashing scheme the application uses.
+     */
+    public void setPasswordHash(String passwordHash) {
+        requireText(passwordHash, "Password hash");
+        this.passwordHash = passwordHash;
     }
 
     /**
