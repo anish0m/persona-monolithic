@@ -2,20 +2,27 @@ package com.persona.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 /**
- * Supplies the one security-related bean Day-05 needs: a password encoder.
+ * Where persona decides who may call what. <b>Day-06.</b>
  *
- * <p><b>This class does not enable Spring Security.</b> The name is chosen
- * because Day-06 will grow it, but today the project depends on
- * {@code spring-security-crypto} only — a plain library with no filters, no
- * auto-configuration and no effect on any endpoint. Adding
- * {@code spring-boot-starter-security} instead would install a
- * {@code SecurityFilterChain} that locks every URL behind a login form that
- * does not exist yet, turn all 30 existing tests red, and print a generated
- * password into the startup log. A dependency is not free because it compiles.
+ * <p><b>Through Day-05 this class did not enable Spring Security at all</b> —
+ * it supplied a {@link PasswordEncoder} and nothing else, because the project
+ * depended on {@code spring-security-crypto} (a plain library, no filters) and
+ * deliberately not on {@code spring-boot-starter-security}. That comment is
+ * now history, and the reason it was written is exactly why this file changed
+ * today rather than earlier: the starter installs a filter chain that
+ * intercepts every request, which was noise on Day-05 and is the entire
+ * subject on Day-06.
  *
  * <h2>Why a @Configuration class rather than a field in UserService</h2>
  *
@@ -37,7 +44,155 @@ import org.springframework.security.crypto.password.PasswordEncoder;
  * </ul>
  */
 @Configuration
+@EnableMethodSecurity
 public class SecurityConfig {
+
+    private final JwtAuthenticationFilter jwtFilter;
+
+    public SecurityConfig(JwtAuthenticationFilter jwtFilter) {
+        this.jwtFilter = jwtFilter;
+    }
+
+    /**
+     * The filter chain: what is public, what needs a token, and what needs a
+     * role.
+     *
+     * <p>This bean <b>replaces</b> Boot's default chain entirely. The default
+     * secures every endpoint behind a generated password printed to the
+     * startup log — useful for a five-minute demo, wrong for anything else,
+     * and the reason adding the starter without writing this method turns a
+     * working application into a 401 machine.
+     *
+     * <h2>The rules, and why each one</h2>
+     *
+     * <pre>
+     *   POST /users        permitAll   signup: there is no token yet, by definition
+     *   POST /auth/login   permitAll   login: the endpoint that ISSUES the token
+     *   GET  /users        ADMIN only  listing every account is an admin action
+     *   anything else      authenticated
+     * </pre>
+     *
+     * <p><b>The default is {@code authenticated()}, deliberately.</b>
+     * {@code anyRequest()} comes last and catches everything not named above,
+     * so a new endpoint added on Day-07 is protected without anyone
+     * remembering to protect it. The opposite default — {@code permitAll} at
+     * the bottom — fails open: every future endpoint is public until someone
+     * notices. <b>Order matters and first match wins</b>, which is why the
+     * specific rules are listed before the catch-all; reverse them and
+     * {@code anyRequest()} swallows everything.
+     *
+     * <p>{@code GET /users} is the one genuinely
+     * <em>authorization</em>-flavoured rule here — the caller is known and
+     * still may not proceed. It is the AuthN/AuthZ distinction made concrete:
+     * a logged-in normal user gets <b>403</b> (we know who you are, no), while
+     * a caller with no token gets <b>401</b> (we do not know who you are).
+     */
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        return http
+                // CSRF protection OFF, and this is safe ONLY because persona's
+                // API is stateless and token-based.
+                //
+                // CSRF attacks work by making a victim's BROWSER send a request
+                // that carries its credentials automatically — which is what a
+                // session cookie does, and precisely what an Authorization
+                // header does not. A malicious page cannot make the browser
+                // attach a header it does not know. Turning this off on a
+                // cookie-authenticated app would be a genuine vulnerability;
+                // here it removes a token exchange that protects nothing.
+                //
+                // Day-09 adds server-rendered Bootstrap pages. If those ever
+                // authenticate by cookie, this line must be revisited — noted
+                // here because that is the day the reasoning above stops
+                // holding.
+                .csrf(csrf -> csrf.disable())
+
+                // Never create an HttpSession. Without this Spring Security
+                // would happily create one and store the SecurityContext in
+                // it, which quietly re-introduces exactly the server-side
+                // state the JWT was chosen to avoid — and makes the app
+                // unable to scale horizontally without sticky sessions.
+                .sessionManagement(session ->
+                        session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+
+                .authorizeHttpRequests(auth -> auth
+                        // ERROR DISPATCHES BYPASS AUTHORIZATION, and leaving
+                        // this out produced a genuinely confusing bug that no
+                        // test caught.
+                        //
+                        // When authorization denies a request, Spring responds
+                        // 403 and then Boot FORWARDS internally to /error to
+                        // build the body. That forward re-enters this filter
+                        // chain as a fresh, anonymous request — so /error was
+                        // itself being denied, the authenticationEntryPoint
+                        // fired, and it overwrote the already-correct 403 with
+                        // a 401. A valid token looked exactly like no token.
+                        //
+                        // The security log is what actually said so:
+                        //     AccessDeniedHandlerImpl: Responding with 403
+                        //     FilterChainProxy: Securing GET /error
+                        // The authorization decision had been right all along;
+                        // the response was being rewritten after the fact.
+                        .dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ERROR,
+                                jakarta.servlet.DispatcherType.FORWARD).permitAll()
+
+                        .requestMatchers(HttpMethod.POST, "/users").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/auth/login").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/users").hasRole("ADMIN")
+                        .anyRequest().authenticated())
+
+                // The JWT filter runs BEFORE the username/password filter.
+                //
+                // Not because persona uses form login — it does not — but
+                // because UsernamePasswordAuthenticationFilter is the standard
+                // positional anchor in the chain, and what actually matters is
+                // that the SecurityContext is populated before the
+                // authorization rules above are evaluated. Register this
+                // filter after them and every request is anonymous at the
+                // moment the decision is made: a valid token would return 401,
+                // which looks like a broken token and is really a broken
+                // ordering.
+                .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
+
+                // No .httpBasic() and no .formLogin(). Both would add a SECOND
+                // way to authenticate, and a second way in is a second thing
+                // to secure, rate-limit and reason about. POST /auth/login is
+                // the only door.
+
+                // 401 FOR UNAUTHENTICATED, and this had to be configured —
+                // found by running it, not by a test.
+                //
+                // Without this block, a request with no token (or a forged
+                // one) returned 403 Forbidden, not 401 Unauthorized. The
+                // reason is that Spring picks an AuthenticationEntryPoint
+                // from the login mechanisms configured, and with neither
+                // httpBasic nor formLogin there is nothing that knows how to
+                // issue a challenge — so it falls through to the access-denied
+                // path, which is 403.
+                //
+                // That is exactly the distinction this day is about, inverted:
+                // 401 means "I do not know who you are, credentials may help",
+                // 403 means "I know who you are and the answer is still no".
+                // Returning 403 to an anonymous caller tells them retrying
+                // with a token is pointless, which is false.
+                //
+                // Note the two handlers are genuinely different paths:
+                // authenticationEntryPoint handles "not authenticated at all",
+                // accessDeniedHandler handles "authenticated, insufficient
+                // authority" — which is what GET /users as a USER hits, and
+                // which was already correct at 403.
+                .exceptionHandling(ex -> ex
+                        .authenticationEntryPoint((request, response, authException) -> {
+                            response.setStatus(HttpStatus.UNAUTHORIZED.value());
+                            response.setContentType("application/problem+json");
+                            response.getWriter().write("""
+                                    {"type":"about:blank","title":"Unauthorized",\
+                                    "status":401,\
+                                    "detail":"Authentication required"}""");
+                        }))
+
+                .build();
+    }
 
     /**
      * BCrypt at the library default cost of 10.

@@ -194,6 +194,62 @@
         </dependency>
 
         <!--
+          Day-06. THE WIDE DEPENDENCY, added deliberately and late.
+
+          Everything the comment above says about why this was avoided through
+          Day-05 was true and is now the point: this starter installs a
+          SecurityFilterChain that intercepts every request. Day-05 did not
+          want that; Day-06 is entirely about configuring it.
+
+          What it brings that spring-security-crypto did not: the servlet
+          filter machinery, SecurityContextHolder, the authorization DSL
+          (requestMatchers/permitAll/authenticated), and @PreAuthorize support.
+          The BCrypt encoder above still comes from -crypto, which this
+          starter includes transitively — the explicit declaration stays, for
+          the same reason spring-boot-starter-jdbc stayed when JPA arrived: a
+          dependency something needs DIRECTLY should be declared directly.
+
+          NOTE ON ADDING IT: the default filter chain secures every endpoint
+          and generates a password into the startup log. SecurityConfig
+          replaces that default entirely, which is why this dependency and the
+          SecurityFilterChain bean must land in the same commit.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
+        <!--
+          Day-06, piece 1. jjwt: issues and validates JWTs. Three artifacts —
+          api (the interface code compiles against), impl (the implementation,
+          runtime scope since nothing imports it directly), and jackson
+          (JSON (de)serialisation of the token, runtime scope for the same
+          reason). This split exists so a project can swap the JSON library
+          without swapping the JWT library.
+
+          NOT spring-boot-starter-security yet — that is piece 3 (the actual
+          filter chain). This piece only needs a class that can turn an email
+          into a signed string and back; no Spring Security type appears here.
+        -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+            <version>0.12.6</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <version>0.12.6</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <version>0.12.6</version>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!--
           Test-only. Bundles JUnit 5, AssertJ, Mockito and Spring's test support.
           <scope>test</scope> means it is on the classpath when running tests,
           but is NOT packaged into the deployed jar.

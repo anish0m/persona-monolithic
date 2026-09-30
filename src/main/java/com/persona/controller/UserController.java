@@ -134,6 +134,34 @@ public class UserController {
     }
 
     /**
+     * The caller's own profile. {@code GET /users/me}. <b>Day-06.</b>
+     *
+     * <p><b>This endpoint exists because {@code GET /users/{email}} is the
+     * wrong shape for "show me my profile".</b> A client that has to name
+     * itself in the URL must first know its own email, and — more importantly
+     * — nothing about that URL stops it naming someone <em>else's</em>. The
+     * identity here comes from the verified token instead, via the
+     * {@link java.security.Principal} Spring Security populated in
+     * {@link com.persona.config.JwtAuthenticationFilter}. It cannot be
+     * spoofed by editing a URL, because it was never in the URL.
+     *
+     * <p>{@code Principal} rather than {@code @AuthenticationPrincipal} or
+     * digging in {@code SecurityContextHolder}: it is a plain Servlet API
+     * type, so this signature does not tie the controller to Spring
+     * Security's classes. {@code getName()} returns whatever the filter used
+     * as the authentication's principal — the email.
+     *
+     * <p>Note this method has no authorization annotation and needs none.
+     * {@code SecurityConfig}'s {@code anyRequest().authenticated()} already
+     * guarantees a token; and there is no way to ask for anyone else's data,
+     * so there is nothing further to check.
+     */
+    @GetMapping("/me")
+    public UserResponse me(java.security.Principal principal) {
+        return UserResponse.from(service.getByEmail(principal.getName()));
+    }
+
+    /**
      * Every user. {@code GET /users}.
      *
      * <p>With no users registered this returns {@code 200 []}, not 404. The
@@ -195,11 +223,43 @@ public class UserController {
      * with a body is a protocol violation that some clients silently discard and
      * others choke on.
      */
+    @org.springframework.security.access.prepost.PreAuthorize(
+            "#email == authentication.name or hasRole('ADMIN')")
     @DeleteMapping("/{email}")
     public ResponseEntity<Void> delete(@PathVariable String email) {
         service.deleteByEmail(email);
         return ResponseEntity.noContent().build();
     }
+
+    // =================================================================
+    //  Why the rule above is an annotation and not an `if`. Day-06.
+    //
+    //  "You may delete yourself, or you may delete anyone if you are an
+    //  admin" cannot be expressed in SecurityConfig, because the URL alone
+    //  does not contain the answer — DELETE /users/a@b.com is allowed or
+    //  forbidden depending on WHO is asking. SecurityConfig's rules match on
+    //  method and path; this one needs to compare a path variable against the
+    //  authenticated principal.
+    //
+    //  @PreAuthorize runs before the method body. `#email` refers to the
+    //  parameter by name, `authentication.name` is the principal the JWT
+    //  filter set, and hasRole('ADMIN') reads the authority it granted —
+    //  which is stored as ROLE_ADMIN, because hasRole adds the prefix (see
+    //  JwtAuthenticationFilter.authorities for that trap in full).
+    //
+    //  This is one of the few places a rule legitimately lives in the
+    //  controller rather than the service, and the reason is narrow: it is a
+    //  rule about the CALLER, not about the data. UserService has never known
+    //  who is calling it, and giving it that knowledge to move this check
+    //  would cost more than the check is worth. If a second entry point ever
+    //  needs the same rule, that is the moment it moves down a layer.
+    //
+    //  Worth knowing: @PreAuthorize does nothing at all without
+    //  @EnableMethodSecurity, which is on SecurityConfig. Annotation present,
+    //  feature off, no warning — this project's recurring failure mode, and
+    //  the reason the verification script tests a forbidden delete rather
+    //  than trusting the annotation to be wired.
+    // =================================================================
 
     // =================================================================
     //  Exception translation MOVED OUT. Day-05.

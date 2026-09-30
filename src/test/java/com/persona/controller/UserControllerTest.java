@@ -58,8 +58,35 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>{@code MockMvc} sends requests through the whole Spring MVC machinery —
  * routing, binding, JSON serialisation, exception handling — without opening a
  * TCP socket. Real dispatch, no network.
+ *
+ * <h2>Day-06 — why this class needed changing when security arrived</h2>
+ *
+ * <p>Adding {@code spring-boot-starter-security} turned all 19 tests here red
+ * at once, and the error was not about authentication: it was
+ * {@code NoSuchBeanDefinitionException: JwtService}. The cause is what
+ * {@code @WebMvcTest} is for. It loads the <em>web</em> slice — controllers,
+ * Jackson, advice — and also {@link com.persona.config.SecurityConfig},
+ * because a security filter chain is part of the web layer. That config
+ * depends on {@code JwtAuthenticationFilter}, which depends on
+ * {@code JwtService}, {@code TokenDenyList} and {@code UserRepository} — none
+ * of which are web beans, so none are in the slice.
+ *
+ * <p>{@code @MockitoBean} supplies them, for the same reason it already
+ * supplies {@code UserService}: this class tests HTTP translation, and the
+ * genuine security behaviour — 401 without a token, 403 for the wrong role —
+ * is verified end to end against a running app instead, where a real token
+ * and a real filter chain are in play. A slice test asserting on a mocked
+ * filter would be asserting on the mock.
+ *
+ * <p>{@code @AutoConfigureMockMvc(addFilters = false)} then takes the filter
+ * chain back out, so these tests keep asserting what they were written to
+ * assert. That is a deliberate narrowing and it is worth naming the risk: it
+ * means nothing in this file would notice if every endpoint became public.
+ * The verification script is what covers that, and it covers it by asking a
+ * real server rather than a mock.
  */
 @WebMvcTest(UserController.class)
+@org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc(addFilters = false)
 class UserControllerTest {
 
     @Autowired
@@ -67,6 +94,17 @@ class UserControllerTest {
 
     @MockitoBean
     private UserService service;
+
+    // Day-06. Not used by any assertion here — present so SecurityConfig's
+    // filter chain can be constructed at all. See the class javadoc.
+    @MockitoBean
+    private com.persona.config.JwtService jwtService;
+
+    @MockitoBean
+    private com.persona.config.TokenDenyList tokenDenyList;
+
+    @MockitoBean
+    private com.persona.repository.UserRepository userRepository;
 
     private User anishom() {
         return new User("khi0ne@example.com", "Anishom", "Frost", "Pass1234#");

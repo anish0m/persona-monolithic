@@ -1,6 +1,7 @@
 package com.persona.controller;
 
 import com.persona.exception.DuplicateEmailException;
+import com.persona.exception.InvalidCredentialsException;
 import com.persona.exception.UserNotFoundException;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
@@ -202,6 +203,34 @@ public class GlobalExceptionHandler {
                 HttpStatus.CONFLICT, e.getMessage());
         problem.setTitle("Conflict");
         problem.setProperty("email", e.getEmail());
+        return problem;
+    }
+
+    /**
+     * 401 Unauthorized — login failed. <b>Day-06.</b>
+     *
+     * <p><b>401, not 403, and the names are actively misleading.</b> Despite
+     * being called "Unauthorized", 401 means <em>unauthenticated</em>: the
+     * server does not know who you are, and offering credentials might help.
+     * 403 Forbidden means the opposite — it knows exactly who you are and the
+     * answer is still no, so retrying with the same identity is pointless.
+     * Login failure is unambiguously the first.
+     *
+     * <p><b>Note what this handler does not add.</b> Every other 4xx handler
+     * in this class attaches the offending value as a structured property —
+     * {@code email} on a duplicate, a field map on a validation failure — so
+     * the client can act on it. This one attaches nothing, and returns the
+     * exception's fixed message rather than anything derived from the request.
+     * {@link InvalidCredentialsException} carries no data for exactly this
+     * reason: a response that distinguished "no such account" from "wrong
+     * password" would let anyone enumerate which emails are registered, one
+     * request at a time. The blandness is the feature.
+     */
+    @ExceptionHandler(InvalidCredentialsException.class)
+    public ProblemDetail handleInvalidCredentials(InvalidCredentialsException e) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.UNAUTHORIZED, e.getMessage());
+        problem.setTitle("Unauthorized");
         return problem;
     }
 
