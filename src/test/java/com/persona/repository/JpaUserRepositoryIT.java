@@ -73,8 +73,34 @@ class JpaUserRepositoryIT {
     @Autowired
     private SpringDataUserRepository springData;
 
+    /**
+     * <b>Day-07 — wallets must go first, and the ordering is not arbitrary.</b>
+     *
+     * <p>This method was one line until today. Adding the wallets table broke
+     * it with:
+     *
+     * <pre>
+     *     update or delete on table "users" violates foreign key constraint
+     *     "wallets_user_id_fkey" on table "wallets"
+     * </pre>
+     *
+     * <p>Worth being clear about what that failure was: <b>the schema working,
+     * not the schema breaking.</b> V4 deliberately declined
+     * {@code ON DELETE CASCADE} on {@code wallets.user_id}, so deleting a user
+     * who still has a wallet FAILS rather than silently destroying their
+     * money. The test harness simply predated wallets.
+     *
+     * <p>The tempting fix was to add {@code ON DELETE CASCADE} to the
+     * migration and leave this method alone. That would have been <b>changing
+     * production behaviour to make a test convenient</b> — the same move
+     * rejected on Day-05, when relaxing {@code save()} into an upsert would
+     * have made {@code updateProfile} compile at the cost of the duplicate
+     * signup guarantee. A test going red is not always a request to change the
+     * thing it is testing.
+     */
     @BeforeEach
     void clean() {
+        jdbc.sql("DELETE FROM wallets").update();
         jdbc.sql("DELETE FROM users").update();
     }
 

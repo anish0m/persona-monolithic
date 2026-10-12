@@ -6,6 +6,7 @@ import com.persona.exception.DuplicateEmailException;
 import com.persona.exception.UserNotFoundException;
 import com.persona.model.User;
 import com.persona.repository.InMemoryUserRepository;
+import com.persona.repository.InMemoryWalletRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -53,8 +54,31 @@ class UserServiceTest {
      */
     private final PasswordEncoder encoder = new BCryptPasswordEncoder(4);
 
-    private final UserService service =
-            new UserService(new InMemoryUserRepository(), encoder);
+    /**
+     * <b>Day-07.</b> {@code UserService.register} now opens a wallet as well as
+     * creating the user, so it needs a {@link WalletService}. Supplying a real
+     * one over an in-memory repository — rather than a Mockito mock — keeps the
+     * property that makes this suite worth having: it is still plain
+     * {@code new}, still no Spring context, still milliseconds.
+     *
+     * <p><b>What this cannot test, and the reason is the point of Day-07.</b>
+     * The fake repository has no transactions, so nothing here rolls back. A
+     * test asserting "when the wallet fails, the user is gone too" would pass
+     * or fail against this object for reasons having nothing to do with
+     * {@code @Transactional}. The annotation is a <em>proxy</em> created by
+     * Spring, and this service was built with {@code new} — <b>there is no
+     * proxy here at all, so {@code @Transactional} is not merely untested but
+     * entirely absent.</b>
+     *
+     * <p>That is not a gap to apologise for; it is the boundary of what a unit
+     * test can claim. The boundary itself is verified in
+     * {@code UserRegistrationIT} against real Postgres, by forcing the wallet
+     * insert to fail and then counting user rows with raw SQL.
+     */
+    private final UserService service = new UserService(
+            new InMemoryUserRepository(),
+            encoder,
+            new WalletService(new InMemoryWalletRepository()));
 
     /**
      * The fixture is now a {@link CreateUserRequest}, not a {@code User}.

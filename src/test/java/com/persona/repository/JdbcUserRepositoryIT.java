@@ -84,8 +84,18 @@ class JdbcUserRepositoryIT {
      * created the schema once at startup, and recreating it per test would be slow
      * and would stop testing the migration that actually ships.
      */
+    /**
+     * <b>Day-07 — wallets first.</b> {@code wallets.user_id} is a foreign key
+     * with no {@code ON DELETE CASCADE}, deliberately: deleting a user who
+     * still holds money should fail loudly rather than destroy the wallet
+     * quietly. So the child rows go first.
+     *
+     * <p>See the same method in {@link JpaUserRepositoryIT} for the longer
+     * account of why the fix went here rather than into the migration.
+     */
     @BeforeEach
     void clean() {
+        jdbc.sql("DELETE FROM wallets").update();
         jdbc.sql("DELETE FROM users").update();
     }
 
@@ -294,21 +304,45 @@ class JdbcUserRepositoryIT {
     }
 
     /**
-     * Both migrations ran, in order.
+     * Every migration on disk ran, and every one of them succeeded.
      *
-     * <p>Widened from the original Day-03 assertion, which only checked V1.
-     * V2 renamed the password column, and a test that counts only the first
-     * migration would still pass against a database that never received the
-     * rename — the query below would then be selecting a column that does not
-     * exist, which is precisely the failure worth catching.
+     * <p><b>Day-07 — this assertion used to hardcode 2</b>, having been widened
+     * from Day-03's original check of V1 alone. It then failed today with
+     * {@code expected: <2> but was: <4>}, because V3 added roles and V4 added
+     * wallets.
+     *
+     * <p>The test was right to notice and wrong in how it asked. A hardcoded
+     * count must be edited by hand on every migration, which means it is a
+     * maintenance tax that eventually gets paid by bumping the number without
+     * thinking — at which point it asserts nothing. The question worth asking
+     * is not "are there four?" but <b>"did everything that exists apply, and
+     * did any of it fail?"</b>, which stays true for V5 without an edit.
+     *
+     * <p>The {@code success = false} half is the part that earns its keep.
+     * Flyway records a failed migration rather than deleting the row, so a
+     * schema can be half-applied while the application starts anyway. Counting
+     * only successes would miss that entirely.
      */
     @Test
-    void bothMigrationsAreRecorded() {
+    void everyMigrationAppliedSuccessfully() {
+        Integer failed = jdbc.sql(
+                        "SELECT COUNT(*) FROM flyway_schema_history WHERE success = false")
+                .query(Integer.class)
+                .single();
+
+        assertEquals(0, failed, "a migration is recorded as FAILED in flyway_schema_history");
+
         Integer applied = jdbc.sql(
                         "SELECT COUNT(*) FROM flyway_schema_history WHERE success = true")
                 .query(Integer.class)
                 .single();
 
-        assertEquals(2, applied, "V1 and V2 must both be applied exactly once");
+        // Not an exact count, for the reason in the javadoc. The lower bound is
+        // pinned at the migrations this suite actually depends on: V1 creates
+        // users, V2 renames the password column, V3 adds role, V4 adds wallets.
+        // Fewer than four and the assertions elsewhere in this file could not
+        // be passing for the right reasons.
+        assertTrue(applied >= 4,
+                "expected at least V1-V4 to be applied, found " + applied);
     }
 }
