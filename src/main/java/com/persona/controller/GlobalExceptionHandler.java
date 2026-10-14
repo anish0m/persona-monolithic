@@ -1,14 +1,9 @@
 package com.persona.controller;
 
 import com.persona.exception.DuplicateEmailException;
-import com.persona.exception.InsufficientFundsException;
 import com.persona.exception.InvalidCredentialsException;
 import com.persona.exception.UserNotFoundException;
-import com.persona.exception.WalletNotActiveException;
-import com.persona.exception.WalletNotFoundException;
 import jakarta.validation.ConstraintViolationException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -83,16 +78,6 @@ import java.util.Map;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    /**
-     * The first logger in this project, added on Day-07 for a specific reason.
-     *
-     * <p>Handlers here generally do not log: a 400 or a 409 is a normal
-     * outcome, and logging every one of them turns the log into a transcript of
-     * user typos. {@code WalletNotFoundException} is the exception, because it
-     * is the one error in this class that <em>should be impossible</em> — see
-     * its handler below. An impossible thing happening is worth a line.
-     */
-    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     /**
      * 400 — bean validation rejected the request body.
@@ -280,89 +265,11 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
-    // =====================================================================
-    //  Day-07 — wallets.
-    // =====================================================================
-
-    /**
-     * 404 — the user has no wallet.
-     *
-     * <p>Should be unreachable: registration opens a wallet in the same
-     * transaction as the user, so every user has one. That makes this handler
-     * worth more than its status code — <b>seeing this in a log is the
-     * signature of a broken transaction boundary</b>, not a routine 404. It
-     * means {@code UserService.register} committed a user without a wallet,
-     * which is precisely the failure {@code @Transactional} was added to
-     * prevent on Day-07.
-     *
-     * <p>Logged at WARN rather than returned silently for that reason. The
-     * status code is for the client; the log line is for whoever has to work
-     * out why a user cannot see their money.
-     */
-    @ExceptionHandler(WalletNotFoundException.class)
-    public ProblemDetail handleWalletNotFound(WalletNotFoundException e) {
-        log.warn("wallet missing for user {} — this should be impossible if the "
-                + "registration transaction boundary is intact", e.getUserId());
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
-                HttpStatus.NOT_FOUND, e.getMessage());
-        problem.setTitle("Not Found");
-        return problem;
-    }
-
-    /**
-     * 409 — the wallet exists and is refusing.
-     *
-     * <p>Not 400: the request was perfectly well-formed, every field validated,
-     * and resending it unchanged would be correct once the wallet is
-     * unfrozen. Not 500: nothing failed. <b>409 Conflict is exactly this
-     * case</b> — a well-formed request that conflicts with the current state of
-     * the resource. Same family as {@link DuplicateEmailException} above.
-     *
-     * <p>{@code status} is attached as a property so a client can branch on it
-     * without parsing prose. This is a deliberate contrast with
-     * {@link InvalidCredentialsException}, which attaches nothing at all
-     * because any extra field there is an account-enumeration oracle. The
-     * difference is who is asking: a login attempt comes from a stranger, while
-     * this response only ever reaches someone already authenticated as the
-     * wallet's owner or an admin. <b>The rule is not "always be vague" but
-     * "never tell a stranger something about a third party".</b>
-     */
-    @ExceptionHandler(WalletNotActiveException.class)
-    public ProblemDetail handleWalletNotActive(WalletNotActiveException e) {
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
-                HttpStatus.CONFLICT, e.getMessage());
-        problem.setTitle("Wallet Not Active");
-        problem.setProperty("status", e.getStatus().name());
-        return problem;
-    }
-
-    /**
-     * 409 — not enough money.
-     *
-     * <p>Also a conflict with resource state rather than a malformed request,
-     * by the same reasoning.
-     *
-     * <p><b>The balance is deliberately NOT attached as a property.</b> The
-     * message names it, and the message goes to the account's owner — but a
-     * machine-readable balance on an error response is the kind of field that
-     * ends up logged by an intermediary, or rendered by a client in a context
-     * the server cannot see. The amount requested is already known to the
-     * caller; the amount held is not something an error needs to broadcast.
-     */
-    @ExceptionHandler(InsufficientFundsException.class)
-    public ProblemDetail handleInsufficientFunds(InsufficientFundsException e) {
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
-                HttpStatus.CONFLICT, e.getMessage());
-        problem.setTitle("Insufficient Funds");
-        return problem;
-    }
-
     /**
      * 409 — an operation was attempted that the object's state forbids.
      *
-     * <p>Today this catches {@code Wallet.close()} refusing to shut a wallet
-     * that still holds money, and {@code WalletService.createFor} refusing a
-     * second wallet for one user.
+     * <p>Nothing in the domain throws this today; it is a safety net for the
+     * day something does.
      *
      * <p>Mapped to 409 rather than 500 because {@code IllegalStateException}
      * from the domain means "you asked for something the current state does not

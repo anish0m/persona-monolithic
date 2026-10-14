@@ -68,29 +68,6 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
 
     /**
-     * Opens the wallet that every registered user gets. <b>Day-07.</b>
-     *
-     * <p>A dependency on another {@code @Service}, which is the first one in
-     * this class and worth a word. The alternative was to inject
-     * {@code WalletRepository} directly and call {@code save(new Wallet(user))}
-     * here — fewer layers, one less file in the call stack.
-     *
-     * <p>It is the wrong shape. "A new user gets an ACTIVE wallet with a zero
-     * balance, and only if they do not already have one" is a rule about
-     * wallets, and it belongs with the other wallet rules rather than being
-     * spelled out again in the user package. The day a second caller needs to
-     * open a wallet, this class is not where they will look for how.
-     *
-     * <p><b>Direction matters.</b> {@code UserService} knows about wallets;
-     * {@code WalletService} does not know about users beyond holding a
-     * {@link User} reference. If that ever becomes mutual — wallets reaching
-     * back into user logic — Spring will report a circular dependency at
-     * startup, and the right fix will be to move the shared rule out rather
-     * than to break the cycle with {@code @Lazy}.
-     */
-    private final WalletService walletService;
-
-    /**
      * Constructor injection, with no {@code @Autowired} — a class with exactly one
      * constructor needs none, because Spring has nothing to choose between.
      *
@@ -103,11 +80,9 @@ public class UserService {
      * and need no application context.
      */
     public UserService(UserRepository repository,
-                       PasswordEncoder passwordEncoder,
-                       WalletService walletService) {
+                       PasswordEncoder passwordEncoder) {
         this.repository = repository;
         this.passwordEncoder = passwordEncoder;
-        this.walletService = walletService;
     }
 
     /**
@@ -175,77 +150,19 @@ public class UserService {
      * which a plaintext password is one {@code toString} or one exception away
      * from a log file.
      *
-     * <h2>Day-07 — why this method is now {@code @Transactional}</h2>
+     * <h2>Why this method is {@code @Transactional}</h2>
      *
-     * <p>Until today this method performed <b>one</b> write, so the absence of a
-     * transaction boundary was invisible and harmless: a single INSERT is
-     * already atomic. Registration now performs <b>two</b> — the user and their
-     * wallet — and that is the exact moment the missing annotation stops being
-     * a style point and becomes a bug.
-     *
-     * <pre>
-     *     POST /users
-     *        │
-     *        ├─► INSERT INTO users   (...)      ✅ succeeds, COMMITTED
-     *        │
-     *        └─► INSERT INTO wallets (...)      ❌ fails
-     * </pre>
-     *
-     * <p>Without the boundary the first insert is already committed when the
-     * second fails. The result is a user who exists, can log in, and <b>can
-     * never hold money</b> — with no error visible anywhere, because the
-     * request may well have returned 201 before anyone noticed. Nothing is
-     * broken enough to page anybody. The account simply does not work, forever,
-     * and the only symptom is a {@code WalletNotFoundException} appearing in
-     * the logs weeks later, far from its cause.
-     *
-     * <p>The invariant being bought is: <b>a user and their wallet, or
-     * neither.</b> Never one.
-     *
-     * <h2>Three ways this annotation can be present and do nothing</h2>
-     *
-     * <p>Worth knowing, because all three leave the annotation sitting in the
-     * source looking correct. {@code @Transactional} is implemented by a
-     * <b>proxy</b> — Spring wraps this bean in a generated subclass that calls
-     * BEGIN before the method and COMMIT or ROLLBACK after — and every trap
-     * follows from the proxy being on the outside.
-     *
-     * <ol>
-     *   <li><b>Self-invocation.</b> If {@code register} were a thin wrapper
-     *       calling an annotated {@code doRegister} on {@code this}, the call
-     *       would never cross the proxy and no transaction would begin. The
-     *       annotation would be visible, the behaviour absent, and nothing
-     *       logged. Hence: the boundary goes on the method the CONTROLLER
-     *       calls, and {@code @Transactional} on a private method does nothing,
-     *       ever.</li>
-     *   <li><b>Checked exceptions.</b> Spring rolls back on
-     *       {@code RuntimeException} and {@code Error} but <b>commits</b> on a
-     *       checked {@code Exception}. persona is safe by inheritance —
-     *       {@link DuplicateEmailException} and the wallet exceptions all
-     *       extend {@code RuntimeException} — rather than by remembering
-     *       {@code rollbackFor} on each method.</li>
-     *   <li><b>Catching it yourself.</b> Wrapping the
-     *       {@code walletService.createFor} call in a try/catch that logs and
-     *       continues would re-create the original bug INSIDE a transaction:
-     *       the proxy never sees an exception, so it commits the user with no
-     *       wallet. <b>A rollback requires the exception to escape the
-     *       method.</b></li>
-     * </ol>
-     *
-     * <p>That third one is the same lesson as the SQLSTATE 25P02 rule from an
-     * earlier day, approached from the other side: a catch block is not a safe
-     * place to do work, and it is not a safe place to hide work either.
-     *
-     * <h2>What this costs on Day-17</h2>
-     *
-     * <p>One annotation works here only because {@code users} and
-     * {@code wallets} live in one database under one Postgres process. In
-     * {@code anthropic-persona-microservice} they do not, and no transaction
-     * can span two databases — so the same two writes become an event, a retry
-     * and a window of time during which a user genuinely exists without a
-     * wallet. That build's {@code UserService} documents what replaces this
-     * line. Reading the two side by side is the point of building persona
-     * twice.
+     * <p>Registration is look-then-act: a {@code findByEmail} read followed by
+     * an INSERT. The boundary means both see one consistent snapshot, and that
+     * any later step added to signup either happens with the user row or not at
+     * all. {@code @Transactional} is implemented by a <b>proxy</b> — Spring
+     * wraps this bean in a generated subclass that calls BEGIN before the
+     * method and COMMIT or ROLLBACK after — and the traps all follow from the
+     * proxy being on the outside: a self-invocation never crosses it, a
+     * {@code private} method is never proxied, Spring <b>commits</b> on a
+     * checked {@code Exception}, and catching an exception yourself means the
+     * proxy never sees it and commits anyway. <b>A rollback requires the
+     * exception to escape the method.</b>
      */
     @Transactional
     public User register(CreateUserRequest request) {
@@ -260,20 +177,6 @@ public class UserService {
                 request.firstName(),
                 request.lastName(),
                 hash));
-
-        // Day-07. The second write, and the reason for the annotation above.
-        //
-        // Deliberately NOT wrapped in a try/catch: if opening the wallet
-        // fails, the exception must escape this method so the proxy sees it
-        // and rolls the user back too. Catching and logging here would leave
-        // a user with no wallet and a 201 response saying everything worked.
-        //
-        // WalletService.createFor is NOT itself @Transactional, by design.
-        // Spring's default propagation is REQUIRED — "join the caller's
-        // transaction if one exists" — so it participates in this one. Signup
-        // is ONE business operation, so it gets ONE boundary, written at the
-        // level where that operation is named.
-        walletService.createFor(user);
 
         return user;
     }
